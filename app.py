@@ -1,46 +1,47 @@
 import streamlit as st
 from PIL import Image
 from transformers import BlipProcessor, BlipForConditionalGeneration
+from keybert import KeyBERT
 from deep_translator import GoogleTranslator
-import torch
+import io
 
-st.set_page_config(page_title="Auto Metadata Generator", layout="wide")
+st.set_page_config(page_title="Auto Metadata Generator", layout="centered")
 
-@st.cache_resource
-def load_model():
+st.title("📸 Auto Metadata Generator")
+st.markdown("Upload gambar, dan aplikasi ini akan membantu membuat metadata seperti caption, title, description, dan keywords secara otomatis.")
+
+uploaded_files = st.file_uploader(
+    "Unggah gambar (bisa lebih dari satu)", 
+    type=["jpg", "jpeg", "png"], 
+    accept_multiple_files=True
+)
+
+if uploaded_files:
     processor = BlipProcessor.from_pretrained("Salesforce/blip-image-captioning-base")
     model = BlipForConditionalGeneration.from_pretrained("Salesforce/blip-image-captioning-base")
-    return processor, model
+    kw_model = KeyBERT()
 
-def generate_caption(image, processor, model):
-    inputs = processor(images=image, return_tensors="pt")
-    with torch.no_grad():
+    for uploaded_file in uploaded_files:
+        st.image(uploaded_file, width=300)
+        image = Image.open(io.BytesIO(uploaded_file.read())).convert('RGB')
+
+        inputs = processor(images=image, return_tensors="pt")
         out = model.generate(**inputs)
-    caption = processor.decode(out[0], skip_special_tokens=True)
-    return caption
+        caption_en = processor.decode(out[0], skip_special_tokens=True)
+        caption_id = GoogleTranslator(source='en', target='id').translate(caption_en)
 
-def translate_text(text, target_lang):
-    return GoogleTranslator(source='auto', target=target_lang).translate(text)
+        keywords = kw_model.extract_keywords(
+            caption_en,
+            keyphrase_ngram_range=(1, 2),
+            stop_words='english',
+            top_n=5
+        )
+        keywords_list = [kw[0] for kw in keywords]
 
-# UI
-st.title("🖼️ Auto Metadata Generator for Microstock")
-st.markdown("Upload an image and get automatic caption, keywords, and translations.")
-
-uploaded_file = st.file_uploader("Upload an image", type=["jpg", "jpeg", "png"])
-
-if uploaded_file:
-    image = Image.open(uploaded_file).convert('RGB')
-    st.image(image, caption="Uploaded Image", use_column_width=True)
-
-    with st.spinner("Generating metadata..."):
-        processor, model = load_model()
-        caption_en = generate_caption(image, processor, model)
-        caption_id = translate_text(caption_en, "id")
-        keywords = [kw.strip() for kw in caption_en.replace(".", "").split()]
-
-    st.subheader("📌 Captions")
-    st.text_area("English", caption_en)
-    st.text_area("Indonesian", caption_id)
-
-    st.subheader("🔑 Keywords")
-    st.write(", ".join(keywords))
+        st.markdown("**Caption (EN):** " + caption_en)
+        st.markdown("**Caption (ID):** " + caption_id)
+        st.markdown("**Title:** " + caption_en.title())
+        st.markdown("**Description:** " + caption_en + ". " + caption_id + ".")
+        st.markdown("**Keywords:** " + ", ".join(keywords_list))
+else:
+    st.info("Silakan unggah gambar terlebih dahulu.")
